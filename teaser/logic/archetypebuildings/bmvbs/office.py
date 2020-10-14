@@ -13,6 +13,8 @@ from teaser.logic.buildingobjects.buildingphysics.innerwall import InnerWall
 from teaser.logic.buildingobjects.buildingphysics.outerwall import OuterWall
 from teaser.logic.buildingobjects.buildingphysics.rooftop import Rooftop
 from teaser.logic.buildingobjects.buildingphysics.window import Window
+from teaser.logic.buildingobjects.buildingphysics.layer import Layer
+from teaser.logic.buildingobjects.buildingphysics.material import Material
 from teaser.logic.buildingobjects.thermalzone import ThermalZone
 
 
@@ -207,16 +209,31 @@ class Office(NonResidential):
             "Exterior Facade South": [90, 180],
             "Exterior Facade West": [90, 270],
         }
+        self.outer_wall_gml = {
+            "Wall1": {"area": None, "orientation": None, "tilt": 90},
+            "Wall2": {"area": None, "orientation": None, "tilt": 90},
+            "Wall3": {"area": None, "orientation": None, "tilt": 90},
+            "Wall4": {"area": None, "orientation": None, "tilt": 90},
+        }
 
         self.roof_names = {"Rooftop": [0, -1]}
+        self.roof_gml = {"Roof": {"area": None, "orientation": -1, "tilt": 0}}
 
         self.ground_floor_names = {"Ground Floor": [0, -2]}
-
+        self.ground_floor_gml = {
+            "Ground Floor": {"area": None, "orientation": -2, "tilt": 0}
+        }
         self.window_names = {
             "Window Facade North": [90, 0],
             "Window Facade East": [90, 90],
             "Window Facade South": [90, 180],
             "Window Facade West": [90, 270],
+        }
+        self.window_gml = {
+            "Window1": {"area": None, "orientation": None, "tilt": 90},
+            "Window2": {"area": None, "orientation": None, "tilt": 90},
+            "Window3": {"area": None, "orientation": None, "tilt": 90},
+            "Window4": {"area": None, "orientation": None, "tilt": 90},
         }
 
         self.inner_wall_names = {"InnerWall": [90, 0]}
@@ -239,6 +256,8 @@ class Office(NonResidential):
         self._est_facade_area = 0
         self._est_width = 0
         self._est_length = 0
+
+        self.factor_win_gml = 0.33
 
         if self.window_layout == 0:
             self.corr_factor_wall = 1.0
@@ -271,6 +290,10 @@ class Office(NonResidential):
             ) / self._est_width
         else:
             pass
+
+        self.work_start = 6
+        self.work_end = 19
+        self.weekend = False
 
         # default values for AHU
         if self.with_ahu is True:
@@ -465,6 +488,467 @@ class Office(NonResidential):
             self.set_outer_wall_area(value, key)
         for key, value in self.window_area.items():
             self.set_window_area(value, key)
+
+        for zone in self.thermal_zones:
+            zone.set_inner_wall_area()
+            zone.set_volume_zone()
+
+    def generate_gml(self):
+        """Generates an office building with gml geometry data.
+
+        With given values, this class generates an office archetype building
+        according to TEASER requirements.
+        """
+        # help area for the correct building area setting while using typeBldgs
+        self.thermal_zones = None
+        type_bldg_area = self.net_leased_area
+        self.net_leased_area = 0.0
+        # create zones with their corresponding area, name and usage
+        for key, value in self.zone_area_factors.items():
+            zone = ThermalZone(self)
+            zone.area = type_bldg_area * value[0]
+            zone.name = key
+            use_cond = UseCond(zone)
+            use_cond.load_use_conditions(value[1], data_class=self.parent.data)
+            zone.use_conditions = use_cond
+
+        for key, value in self.outer_wall_gml.items():
+            if value["area"] == 0:
+                pass
+            else:
+                self.outer_area[value["orientation"]] = value["area"]
+
+                for zone in self.thermal_zones:
+                    # create wall and set building elements
+                    outer_wall = OuterWall(zone)
+                    outer_wall.load_type_element(
+                        year=self.year_of_construction,
+                        construction=self.construction_type,
+                        data_class=self.parent.data,
+                    )
+                    outer_wall.name = key
+                    outer_wall.tilt = value["tilt"]
+                    outer_wall.orientation = value["orientation"]
+
+        for key, value in self.window_gml.items():
+            if value["area"] == 0:
+                pass
+            else:
+                self.window_area[value["orientation"]] = value["area"]
+
+                """
+                There is no real classification for windows, so this is a bit hard
+                code - will be fixed sometime.
+                """
+                for zone in self.thermal_zones:
+                    window = Window(zone)
+                    window.load_type_element(
+                        self.year_of_construction,
+                        "Kunststofffenster, " "Isolierverglasung",
+                        data_class=self.parent.data,
+                    )
+                    window.name = key
+                    window.tilt = value["tilt"]
+                    window.orientation = value["orientation"]
+
+        for key, value in self.roof_gml.items():
+            if value["area"] == 0:
+                pass
+            else:
+                self.outer_area[value["orientation"]] = value["area"]
+
+                for zone in self.thermal_zones:
+                    roof = Rooftop(zone)
+                    roof.load_type_element(
+                        year=self.year_of_construction,
+                        construction=self.construction_type,
+                        data_class=self.parent.data,
+                    )
+                    roof.name = key
+                    roof.tilt = value["tilt"]
+                    roof.orientation = value["orientation"]
+
+        for key, value in self.ground_floor_gml.items():
+            if value["area"] == 0:
+                pass
+            else:
+                self.outer_area[value["orientation"]] = value["area"]
+
+                for zone in self.thermal_zones:
+                    ground_floor = GroundFloor(zone)
+                    ground_floor.load_type_element(
+                        year=self.year_of_construction,
+                        construction=self.construction_type,
+                        data_class=self.parent.data,
+                    )
+                    ground_floor.name = key
+                    ground_floor.tilt = value["tilt"]
+                    ground_floor.orientation = value["orientation"]
+
+        for key, value in self.inner_wall_names.items():
+
+            for zone in self.thermal_zones:
+                inner_wall = InnerWall(zone)
+                inner_wall.load_type_element(
+                    year=self.year_of_construction,
+                    construction=self.construction_type,
+                    data_class=self.parent.data,
+                )
+                inner_wall.name = key
+                inner_wall.tilt = value[0]
+                inner_wall.orientation = value[1]
+
+        if self.number_of_floors > 1:
+
+            for key, value in self.ceiling_names.items():
+
+                for zone in self.thermal_zones:
+                    ceiling = Ceiling(zone)
+                    ceiling.load_type_element(
+                        year=self.year_of_construction,
+                        construction=self.construction_type,
+                        data_class=self.parent.data,
+                    )
+                    ceiling.name = key
+                    ceiling.tilt = value[0]
+                    ceiling.orientation = value[1]
+
+            for key, value in self.floor_names.items():
+
+                for zone in self.thermal_zones:
+                    floor = Floor(zone)
+                    floor.load_type_element(
+                        year=self.year_of_construction,
+                        construction=self.construction_type,
+                        data_class=self.parent.data,
+                    )
+                    floor.name = key
+                    floor.tilt = value[0]
+                    floor.orientation = value[1]
+        else:
+            pass
+
+        for key, value in self.outer_area.items():
+            self.set_outer_wall_area(value, key)
+        for key, value in self.window_area.items():
+            self.set_window_area(value, key)
+
+        for zone in self.thermal_zones:
+            zone.set_inner_wall_area()
+            zone.set_volume_zone()
+
+    def generate_info(self):
+        """Generates an office building with gml geometry data.
+
+        With given values, this class generates an office archetype building
+        according to TEASER requirements.
+        """
+        # help area for the correct building area setting while using typeBldgs
+        self.thermal_zones = None
+        type_bldg_area = self.net_leased_area
+        self.net_leased_area = 0.0
+        # create zones with their corresponding area, name and usage
+        for key, value in self.zone_area_factors.items():
+            zone = ThermalZone(self)
+            zone.area = type_bldg_area * value[0]
+            zone.name = key
+            use_cond = UseCond(zone)
+            use_cond.load_use_conditions(value[1], data_class=self.parent.data)
+            zone.use_conditions = use_cond
+
+        for key, value in self.outer_wall_gml.items():
+
+            for zone in self.thermal_zones:
+                wall_factor = zone.area / type_bldg_area
+                # create wall and set building elements
+                outer_wall = OuterWall(zone)
+                outer_wall.name = key
+                outer_wall.tilt = value["tilt"]
+                outer_wall.orientation = value["orientation"]
+                outer_wall.area = value["area"] * wall_factor
+                if value["layer"] is None:
+                    outer_wall.load_type_element(
+                        year=self.year_of_construction,
+                        construction=self.construction_type,
+                        data_class=self.parent.data,
+                    )
+                else:
+                    for key, layer_in in value["layer"].items():
+                        layer = Layer(outer_wall)
+                        layer.id = layer_in["position"]
+                        layer.thickness = layer_in["thickness"]
+                        material = Material(layer)
+                        material.name = layer_in["material"]
+                        material.density = layer_in["density"]
+                        material.thermal_conduc = layer_in["thermal_conduc"]
+                        material.heat_capac = layer_in["heat_capac"]
+                        material.solar_absorp = 0.5
+                r_conduc = 0
+                for count_layer in outer_wall.layer:
+                    r_conduc += (
+                        count_layer.thickness / count_layer.material.thermal_conduc
+                    )
+                if value["u_value"] / outer_wall.u_value < 0.95:
+
+                    layer = Layer(outer_wall)
+                    layer.id = len(outer_wall.layer)
+                    layer.thickness = (
+                        1 / value["u_value"]
+                        - (
+                            (
+                                outer_wall.r_outer_comb * outer_wall.area
+                                + outer_wall.r_inner_comb * outer_wall.area
+                                + r_conduc
+                            )
+                        )
+                    ) * 0.04
+
+                    material = Material(layer)
+                    material.name = "EPS_040_15"
+                    material.density = 1.0
+                    material.thermal_conduc = 0.04
+                    material.heat_capac = 1.5
+                    material.solar_absorp = 0.5
+
+                elif value["u_value"] / outer_wall.u_value > 1.05:
+
+                    layer_dict = {}
+                    for lay in outer_wall.layer:
+                        layer_dict[lay] = lay.thickness / lay.material.thermal_conduc
+
+                    list_of_layer = sorted(
+                        layer_dict.items(), reverse=True, key=lambda x: x[1]
+                    )
+                    thickness_diff = (
+                        1 / value["u_value"]
+                        - (
+                            (
+                                outer_wall.r_outer_comb * outer_wall.area
+                                + outer_wall.r_inner_comb * outer_wall.area
+                                + r_conduc
+                            )
+                        )
+                    ) * list_of_layer[0][0].material.thermal_conduc
+                    list_of_layer[0][0].thickness += thickness_diff
+
+        for key, value in self.window_gml.items():
+            for zone in self.thermal_zones:
+                win_factor = zone.area / type_bldg_area
+                # create wall and set building elements
+                window = Window(zone)
+                window.name = key
+                window.tilt = value["tilt"]
+                window.orientation = value["orientation"]
+                window.area = value["area"] * win_factor
+                window.g_value = 0.7
+                window.a_conv = 0.03
+                layer = Layer(window)
+                layer.id = 0
+                layer.thickness = (
+                    1 / value["u_value"]
+                    - (1 / (window.inner_convection + window.inner_radiation))
+                    - (1 / (window.outer_convection + window.outer_radiation))
+                ) * 0.76
+                material = Material(layer)
+                material.name = "GenericGlas"
+                material.thermal_conduc = 0.76
+                material.solar_absorp = 0.7
+
+        for key, value in self.roof_gml.items():
+            for zone in self.thermal_zones:
+                roof_factor = zone.area / type_bldg_area
+                # create wall and set building elements
+                roof = Rooftop(zone)
+                roof.name = key
+                roof.tilt = 0.0
+                roof.orientation = -1
+                roof.area = value["area"] * roof_factor
+                if value["layer"] is None:
+                    roof.load_type_element(
+                        year=self.year_of_construction,
+                        construction=self.construction_type,
+                        data_class=self.parent.data,
+                    )
+                else:
+                    for key, layer_in in value["layer"].items():
+                        layer = Layer(roof)
+                        layer.id = layer_in["position"]
+                        layer.thickness = layer_in["thickness"]
+                        material = Material(layer)
+                        material.name = layer_in["material"]
+                        material.density = layer_in["density"]
+                        material.thermal_conduc = layer_in["thermal_conduc"]
+                        material.heat_capac = layer_in["heat_capac"]
+                        material.solar_absorp = 0.5
+                r_conduc = 0
+                for count_layer in roof.layer:
+                    r_conduc += (
+                        count_layer.thickness / count_layer.material.thermal_conduc
+                    )
+
+                if value["u_value"] / roof.u_value < 0.95:
+
+                    layer = Layer(roof)
+                    layer.id = len(roof.layer)
+                    layer.thickness = (
+                        1 / value["u_value"]
+                        - (
+                            (
+                                roof.r_outer_comb * roof.area
+                                + roof.r_inner_comb * roof.area
+                                + r_conduc
+                            )
+                        )
+                    ) * 0.04
+
+                    material = Material(layer)
+                    material.name = "EPS_040_15"
+                    material.density = 1.0
+                    material.thermal_conduc = 0.04
+                    material.heat_capac = 1.5
+                    material.solar_absorp = 0.5
+
+                elif value["u_value"] / roof.u_value > 1.05:
+
+                    layer_dict = {}
+
+                    for lay in roof.layer:
+                        layer_dict[lay] = lay.thickness / lay.material.thermal_conduc
+
+                    list_of_layer = sorted(
+                        layer_dict.items(), reverse=True, key=lambda x: x[1]
+                    )
+
+                    thickness_diff = (
+                        1 / value["u_value"]
+                        - (
+                            (
+                                roof.r_outer_comb * roof.area
+                                + roof.r_inner_comb * roof.area
+                                + r_conduc
+                            )
+                        )
+                    ) * list_of_layer[0][0].material.thermal_conduc
+                    list_of_layer[0][0].thickness += thickness_diff
+
+        for key, value in self.ground_floor_gml.items():
+            for zone in self.thermal_zones:
+                ground_factor = zone.area / type_bldg_area
+                # create wall and set building elements
+                ground = GroundFloor(zone)
+                ground.name = key
+                ground.tilt = 0.0
+                ground.orientation = -2
+                ground.area = value["area"] * ground_factor
+                if value["layer"] is None:
+                    ground.load_type_element(
+                        year=self.year_of_construction,
+                        construction=self.construction_type,
+                        data_class=self.parent.data,
+                    )
+                else:
+                    for key, layer_in in value["layer"].items():
+                        layer = Layer(ground)
+                        layer.id = layer_in["position"]
+                        layer.thickness = layer_in["thickness"]
+                        material = Material(layer)
+                        material.name = layer_in["material"]
+                        material.density = layer_in["density"]
+                        material.thermal_conduc = layer_in["thermal_conduc"]
+                        material.heat_capac = layer_in["heat_capac"]
+                        material.solar_absorp = 0.5
+                r_conduc = 0
+                for count_layer in ground.layer:
+                    r_conduc += (
+                        count_layer.thickness / count_layer.material.thermal_conduc
+                    )
+
+                if value["u_value"] / ground.u_value < 0.95:
+                    layer = Layer(ground)
+                    layer.id = len(ground.layer)
+                    layer.thickness = (
+                        1 / value["u_value"]
+                        - (
+                            (
+                                ground.r_outer_comb * ground.area
+                                + ground.r_inner_comb * ground.area
+                                + r_conduc
+                            )
+                        )
+                    ) * 0.04
+
+                    material = Material(layer)
+                    material.name = "EPS_040_15"
+                    material.density = 1.0
+                    material.thermal_conduc = 0.04
+                    material.heat_capac = 1.5
+                    material.solar_absorp = 0.5
+
+                elif value["u_value"] / ground.u_value > 1.05:
+
+                    layer_dict = {}
+                    for lay in ground.layer:
+                        layer_dict[lay] = lay.thickness / lay.material.thermal_conduc
+
+                    list_of_layer = sorted(
+                        layer_dict.items(), reverse=True, key=lambda x: x[1]
+                    )
+
+                    thickness_diff = (
+                        1 / value["u_value"]
+                        - (
+                            (
+                                ground.r_outer_comb * ground.area
+                                + ground.r_inner_comb * ground.area
+                                + r_conduc
+                            )
+                        )
+                    ) * list_of_layer[0][0].material.thermal_conduc
+
+                    list_of_layer[0][0].thickness += thickness_diff
+
+        for key, value in self.inner_wall_names.items():
+
+            for zone in self.thermal_zones:
+                inner_wall = InnerWall(zone)
+                inner_wall.load_type_element(
+                    year=self.year_of_construction,
+                    construction=self.construction_type,
+                    data_class=self.parent.data,
+                )
+                inner_wall.name = key
+                inner_wall.tilt = value[0]
+                inner_wall.orientation = value[1]
+
+        if self.number_of_floors > 1:
+
+            for key, value in self.ceiling_names.items():
+
+                for zone in self.thermal_zones:
+                    ceiling = Ceiling(zone)
+                    ceiling.load_type_element(
+                        year=self.year_of_construction,
+                        construction=self.construction_type,
+                        data_class=self.parent.data,
+                    )
+                    ceiling.name = key
+                    ceiling.tilt = value[0]
+                    ceiling.orientation = value[1]
+
+            for key, value in self.floor_names.items():
+
+                for zone in self.thermal_zones:
+                    floor = Floor(zone)
+                    floor.load_type_element(
+                        year=self.year_of_construction,
+                        construction=self.construction_type,
+                        data_class=self.parent.data,
+                    )
+                    floor.name = key
+                    floor.tilt = value[0]
+                    floor.orientation = value[1]
+        else:
+            pass
 
         for zone in self.thermal_zones:
             zone.set_inner_wall_area()
